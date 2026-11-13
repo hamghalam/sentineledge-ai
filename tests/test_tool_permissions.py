@@ -9,6 +9,11 @@ from sentineledge.tools.registry import ToolExecutor
 from sentineledge.tools.calculator import CalculatorTool
 
 
+from sentineledge.safety.permissions import ToolPermissionManager
+from sentineledge.tools.registry import ToolExecutor
+
+
+
 def test_read_only_tool_is_allowed():
     manager = ToolPermissionManager()
 
@@ -91,3 +96,44 @@ def test_calculator_rejects_unsupported_operator():
 
     with pytest.raises(ValueError):
         calculator.calculate("2 // 1")
+        
+        
+
+
+
+
+def test_executor_rejects_duplicate_registration():
+    executor = ToolExecutor(ToolPermissionManager())
+
+    def calculator(expression: str):
+        return 10
+
+    executor.register("calculator", calculator)
+
+    with pytest.raises(ValueError, match="already registered"):
+        executor.register("calculator", calculator)
+
+
+def test_executor_rejects_non_callable_registration():
+    executor = ToolExecutor(ToolPermissionManager())
+
+    with pytest.raises(TypeError, match="must be callable"):
+        executor.register("calculator", "not-a-function")
+
+
+def test_executor_validates_arguments_before_execution():
+    executor = ToolExecutor(ToolPermissionManager())
+
+    execution_tracker = {"called": False}
+
+    def calculator(expression: str):
+        execution_tracker["called"] = True
+        return 10
+
+    executor.register("calculator", calculator)
+
+    with pytest.raises(TypeError, match="Invalid arguments"):
+        executor.execute("calculator", wrong_argument=10)
+
+    assert execution_tracker["called"] is False
+        
