@@ -6,7 +6,7 @@ SentinelEdge AI is an ongoing engineering project focused on building a modular 
 
 The project explores how AI agents can interact with tools and external context while operating within explicit permission boundaries and safety policies.
 
-> **Project status:** Early development — foundational safety gateway, tool authorization, calculator tool, and FastAPI endpoints implemented. Cloud/edge routing and LLM-based agent orchestration are planned.
+> **Project status:** Early development — foundational safety gateway, controlled tool execution, FastAPI endpoints, and initial LangGraph agent orchestration implemented. The current agent uses a deterministic planner and mock inference backend. LLM integration and cloud/edge routing are planned.
 
 ## 1. Project Goals
 
@@ -21,35 +21,51 @@ The long-term goals are to:
 
 ## 2. Current Architecture
 
+The project currently has two execution paths: the FastAPI endpoints and the LangGraph agent workflow.
+
+### LangGraph Agent Workflow
+
 ```text
-                  Client
-                    |
-                    v
-               FastAPI API
-                    |
-          +---------+----------+
-          |                    |
-          v                    v
-     AI Execution API     Tool Execution API
-          |                    |
-          v                    v
-    Prompt Injection     Tool Permission
-       Detector             Manager
-          |                    |
-          v                    v
-     Policy Engine         Tool Executor
-          |                    |
-          v                    v
-   Trust Boundary          Calculator
-      Formatter
-          |
-          v
-    Mock Inference
-       Backend
-          |
-          v
-       Response
+                  User Input
+                      |
+                      v
+               Input Validation
+                      |
+                      v
+             Prompt Injection Check
+                      |
+                      v
+                   Planner
+              (Deterministic)
+                      |
+                      v
+              Safety Supervisor
+                      |
+              +-------+-------+
+              |               |
+          Tool Selected    No Tool Needed
+              |               |
+              v               v
+         Tool Executor    Mock Inference
+              |               |
+              v               |
+          Calculator          |
+              |               |
+              +-------+-------+
+                      |
+                      v
+                   Result
 ```
+
+### Safety and Tool Execution Components
+
+- Policy Engine
+- Prompt Injection Detector
+- Trust Boundary Formatter
+- Tool Permission Manager
+- Centralized Tool Executor
+
+The LangGraph workflow uses these security components to validate input, select a candidate action, authorize tool execution, and produce a result.
 
 ## 3. Implemented Components
 
@@ -67,6 +83,21 @@ The long-term goals are to:
 - Sensitive tools require approval before execution.
 - Calculator tool using Python AST parsing and an operator allowlist instead of `eval()`.
 - FastAPI endpoint for controlled tool execution.
+- Argument signature validation before tool invocation.
+- Duplicate and unauthorized tool registration prevention.
+
+### Agent Orchestration
+
+- LangGraph-based stateful workflow.
+- Input validation node.
+- Prompt injection detection node.
+- Deterministic baseline planner.
+- Safety supervisor for tool authorization.
+- Controlled tool execution node.
+- Direct response node using the mock inference backend.
+- Blocked response path for rejected requests.
+
+**Current limitation:** The planner is rule-based and does not use an LLM yet. LangGraph manages the workflow; it does not itself provide the language model.
 
 ### Inference API
 
@@ -84,7 +115,7 @@ The development server exposes two endpoints.
 | POST | `/api/v1/execute` | Safety checks and inference |
 | POST | `/api/v1/tools/execute` | Permission-controlled tool execution |
 
-Interactive API documentation is available at:
+Interactive API documentation:
 
 `http://127.0.0.1:8000/docs`
 
@@ -127,16 +158,17 @@ Expected response:
 
 | Area | Technology |
 |---|---|
-| Programming language | Python |
+| Programming language | Python 3.12+ |
 | API framework | FastAPI |
 | Data validation | Pydantic |
+| Agent orchestration | LangGraph |
 | Testing | Pytest |
 | API testing | HTTPX / FastAPI TestClient |
 | Tool execution | Python |
-| Containerization | Planned |
-| Agent orchestration | LangGraph — planned |
+| Containerization | Docker — planned |
 | Local inference | Ollama / other local inference runtimes — planned |
 | Edge inference | ONNX Runtime — planned |
+| Model optimization | FP16 / INT8 — planned |
 
 ## 6. Local Development
 
@@ -144,7 +176,7 @@ Expected response:
 
 - Python 3.12+
 - Git
-- PowerShell (for the commands below)
+- PowerShell
 
 ### Setup
 
@@ -165,7 +197,7 @@ python -m venv .venv
 Install dependencies:
 
 ```powershell
-python -m pip install fastapi uvicorn pydantic pyyaml pytest httpx
+python -m pip install -r requirements-dev.txt
 ```
 
 Set the source directory:
@@ -180,9 +212,19 @@ $env:PYTHONPATH = "src"
 python -m uvicorn sentineledge.api.main:app --reload
 ```
 
-Open the API documentation:
+Open:
 
 `http://127.0.0.1:8000/docs`
+
+### Run the LangGraph Agent
+
+The current agent supports basic arithmetic requests through the calculator tool and direct responses through the mock inference backend.
+
+```powershell
+$env:PYTHONPATH = "src"
+
+python -c "from sentineledge.agent.graph import build_agent_graph; agent = build_agent_graph(); print(agent.invoke({'user_input': 'What is 10 + 5?'}))"
+```
 
 ### Run Tests
 
@@ -199,16 +241,19 @@ Current limitations include:
 
 - The prompt-injection detector uses a limited set of regular-expression patterns and cannot detect every attack.
 - Trust-boundary formatting is a defense-in-depth measure, not a guarantee that an LLM will ignore malicious external instructions.
+- The current planner is deterministic and rule-based; LLM-based planning has not yet been implemented.
+- The inference backend is currently a mock implementation.
 - Sensitive tools currently return `require_approval`; a trusted approval workflow has not yet been implemented.
 - The calculator supports a restricted set of arithmetic operations but requires further hardening against resource-exhaustion inputs.
-- The inference backend is currently a mock implementation.
 - Authentication, user-level authorization, rate limiting, and production-grade audit logging are not yet implemented.
+- The LangGraph workflow is currently a separate agent entry point and has not yet been integrated into the FastAPI execution endpoint.
 
 Security decisions should be enforced by trusted application code rather than relying exclusively on model instructions or model-generated classifications.
 
 ## 8. Roadmap
 
 ### Phase 1 — Safety and Tool Foundation
+
 - [x] FastAPI application
 - [x] Policy engine
 - [x] Baseline prompt-injection detector
@@ -219,13 +264,18 @@ Security decisions should be enforced by trusted application code rather than re
 - [x] API and unit tests
 
 ### Phase 2 — Agentic AI
-- [ ] LangGraph-based agent orchestration
-- [ ] Planner and safety supervisor
-- [ ] Tool selection and execution workflow
+
+- [x] LangGraph-based agent orchestration
+- [x] Baseline planner
+- [x] Safety supervisor
+- [x] Tool selection and execution workflow
+- [ ] LLM-based structured planner
+- [ ] FastAPI integration for the agent workflow
 - [ ] Trusted human-approval mechanism
 - [ ] Output validation and grounding
 
 ### Phase 3 — Hybrid Cloud and Edge Inference
+
 - [ ] Local LLM integration
 - [ ] Cloud inference backend
 - [ ] Dynamic edge/cloud routing
@@ -233,6 +283,7 @@ Security decisions should be enforced by trusted application code rather than re
 - [ ] ONNX Runtime integration where supported
 
 ### Phase 4 — Optimization and Evaluation
+
 - [ ] FP16 and INT8 inference optimization
 - [ ] CPU/GPU/NPU benchmarking
 - [ ] Prompt-injection evaluation
