@@ -136,4 +136,80 @@ def test_executor_validates_arguments_before_execution():
         executor.execute("calculator", wrong_argument=10)
 
     assert execution_tracker["called"] is False
+    
+def test_executor_rejects_wrong_argument_type():
+    executor = ToolExecutor(ToolPermissionManager())
+    execution_tracker = {"called": False}
+
+    def calculator(expression):
+        execution_tracker["called"] = True
+        return 10
+
+    executor.register("calculator", calculator)
+
+    result = executor.execute(
+        "calculator",
+        expression=125,
+    )
+
+    assert result.decision == "deny"
+    assert execution_tracker["called"] is False
+
+
+def test_executor_rejects_empty_expression():
+    executor = ToolExecutor(ToolPermissionManager())
+    execution_tracker = {"called": False}
+
+    def calculator(expression):
+        execution_tracker["called"] = True
+        return 10
+
+    executor.register("calculator", calculator)
+
+    result = executor.execute(
+        "calculator",
+        expression="   ",
+    )
+
+    assert result.decision == "deny"
+    assert execution_tracker["called"] is False
+
+
+def test_executor_rejects_expression_longer_than_100_characters():
+    executor = ToolExecutor(ToolPermissionManager())
+    execution_tracker = {"called": False}
+
+    def calculator(expression):
+        execution_tracker["called"] = True
+        return 10
+
+    executor.register("calculator", calculator)
+
+    result = executor.execute(
+        "calculator",
+        expression="1" * 101,
+    )
+
+    assert result.decision == "deny"
+    assert execution_tracker["called"] is False
+
+
+def test_executor_rejects_extra_arguments_before_execution():
+    executor = ToolExecutor(ToolPermissionManager())
+    execution_tracker = {"called": False}
+
+    def calculator(expression):
+        execution_tracker["called"] = True
+        return 10
+
+    executor.register("calculator", calculator)
+
+    with pytest.raises(TypeError, match="Invalid arguments"):
+        executor.execute(
+            "calculator",
+            expression="125 * 8",
+            value=125,
+        )
+
+    assert execution_tracker["called"] is False
         
