@@ -8,6 +8,7 @@ from sentineledge.agent.nodes import (
     validate_input,
     detect_injection,
     planner,
+    llm_planner_node,
     safety_supervisor,
     execute_tool,
     direct_response,
@@ -24,28 +25,27 @@ from sentineledge.tools.calculator import CalculatorTool
 from sentineledge.inference.mock_backend import MockInferenceBackend
 
 
-def build_agent_graph(inference_backend=None):
-
-    # Initialize existing project components.
+def build_agent_graph(
+    inference_backend=None,
+    planner_backend=None,
+):
     permission_manager = ToolPermissionManager()
     injection_detector = PromptInjectionDetector()
     trust_boundary = TrustBoundaryFormatter()
 
-    backend = inference_backend or MockInferenceBackend()
+    backend = (
+        inference_backend
+        if inference_backend is not None
+        else MockInferenceBackend()
+    )
 
     executor = ToolExecutor(permission_manager)
 
     calculator = CalculatorTool()
+    executor.register("calculator", calculator.calculate)
 
-    executor.register(
-        "calculator",
-        calculator.calculate,
-    )
-
-    # Define graph.
     workflow = StateGraph(AgentState)
 
-    # Register nodes.
     workflow.add_node("validate_input", validate_input)
 
     workflow.add_node(
@@ -56,7 +56,16 @@ def build_agent_graph(inference_backend=None):
         ),
     )
 
-    workflow.add_node("planner", planner)
+    if planner_backend is None:
+        workflow.add_node("planner", planner)
+    else:
+        workflow.add_node(
+            "planner",
+            partial(
+                llm_planner_node,
+                planner_instance=planner_backend,
+            ),
+        )
 
     workflow.add_node(
         "safety_supervisor",
@@ -85,14 +94,13 @@ def build_agent_graph(inference_backend=None):
 
     workflow.add_node("blocked_response", blocked_response)
 
-    # Define graph edges.
     workflow.add_edge(START, "validate_input")
 
     workflow.add_conditional_edges(
         "validate_input",
         lambda state: (
             "blocked_response"
-            if state["decision"] == "deny"
+            if state["decision"] != "allow"
             else "detect_injection"
         ),
     )

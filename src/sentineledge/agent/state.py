@@ -8,6 +8,7 @@ class AgentState(TypedDict, total=False):
     # Planner output
     tool_name: str | None
     tool_args: dict[str, Any]
+    planner_action: str | None
 
     # Safety and execution status
     decision: str
