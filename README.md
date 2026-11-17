@@ -2,159 +2,224 @@
 
 **A Safety-Aware Hybrid Agentic AI System with Cloud and Edge Inference**
 
-SentinelEdge AI is an ongoing engineering project focused on building a modular AI system that combines agentic workflows, application-level security controls, and hybrid cloud/edge inference.
+SentinelEdge AI is an experimental engineering project exploring the intersection of **Agentic AI, AI Safety, and Edge AI**.
 
-The project explores how AI agents can interact with tools and external context while operating within explicit permission boundaries and safety policies.
+It combines structured LLM-based planning, controlled tool execution, application-level security enforcement, and modular inference backends.
 
-> **Project status:** Early development — foundational safety gateway, controlled tool execution, FastAPI endpoints, and initial LangGraph agent orchestration implemented. The current agent uses a deterministic planner and mock inference backend. LLM integration and cloud/edge routing are planned.
+The central design principle is that **an AI model may propose an action, but trusted application code decides whether that action is permitted and whether it can execute.**
+
+The long-term objective is to develop a hybrid AI architecture capable of intelligently distributing workloads between local edge devices and cloud inference services while considering security, privacy, latency, and computational resources.
+
+> **Project status:** Active development. The foundational safety gateway, LangGraph orchestration, structured local LLM planning, Ollama inference backend, and tool-specific argument validation are implemented.
+
+---
 
 ## 1. Project Goals
 
-The long-term goals are to:
+The project aims to:
 
-- Build a safety-aware foundation for agentic AI applications.
+- Build a modular and safety-aware agentic AI architecture.
+- Separate LLM-generated proposals from application-level authorization.
 - Enforce tool permissions outside the language model.
-- Treat retrieved documents and external tool outputs as untrusted data.
-- Route inference requests between local edge models and cloud models.
+- Validate tool arguments before execution.
+- Treat external documents and retrieved content as untrusted data.
+- Support interchangeable inference backends.
+- Explore privacy-aware and resource-aware edge/cloud inference routing.
 - Evaluate security, latency, throughput, and resource consumption.
-- Explore efficient model deployment using ONNX Runtime and quantization.
+- Investigate efficient model deployment using ONNX Runtime and quantization.
 
-## 2. Current Architecture
+## 2. System Architecture
 
-The project currently has two execution paths: the FastAPI endpoints and the LangGraph agent workflow.
+The system is organized into independent components with clearly defined responsibilities.
 
-### LangGraph Agent Workflow
+### High-Level Architecture
 
 ```text
-                  User Input
-                      |
-                      v
-               Input Validation
-                      |
-                      v
-             Prompt Injection Check
-                      |
-                      v
-                   Planner
-              (Deterministic)
-                      |
-                      v
-              Safety Supervisor
-                      |
-              +-------+-------+
-              |               |
-          Tool Selected    No Tool Needed
-              |               |
-              v               v
-         Tool Executor    Mock Inference
-              |               |
-              v               |
-          Calculator          |
-              |               |
-              +-------+-------+
-                      |
-                      v
-                   Result
+                    User Request
+                         |
+                         v
+                 FastAPI / Agent Entry
+                         |
+                         v
+                 Safety Gateway
+                         |
+              +----------+----------+
+              |                     |
+              v                     v
+        Input Validation      Injection Detection
+              |                     |
+              +----------+----------+
+                         |
+                         v
+                  Agent Orchestrator
+                      LangGraph
+                         |
+                         v
+                    LLM Planner
+                  (Structured Output)
+                         |
+                         v
+                 Pydantic Validation
+                         |
+                         v
+                 Safety Supervisor
+                         |
+                  Permission Check
+                         |
+              +----------+----------+
+              |                     |
+              v                     v
+         Tool Executor         Direct Response
+              |                     |
+       Argument Validation          |
+              |                     |
+              v                     v
+          Calculator          Inference Backend
+                                    |
+                          +---------+---------+
+                          |                   |
+                          v                   v
+                     Local LLM          Future Cloud LLM
+                       Ollama
+                          |
+                          v
+                    Final Response
 ```
 
-### Safety and Tool Execution Components
+The LangGraph agent supports both a deterministic baseline planner and an LLM-based structured planner.
 
-- Policy Engine
-- Prompt Injection Detector
-- Trust Boundary Formatter
-- Tool Permission Manager
-- Centralized Tool Executor
+### Core Design Principles
 
-The LangGraph workflow uses these security components to validate input, select a candidate action, authorize tool execution, and produce a result.
+**1. Separation of planning and authorization**
+
+The LLM planner proposes actions but cannot authorize or execute them.
+
+**2. Independent security enforcement**
+
+Tool permissions and argument validation are enforced by trusted application code.
+
+**3. Fail-closed execution**
+
+Planner failures and authorization failures must not result in tool execution.
+
+**4. Modular inference**
+
+Inference backends follow a common interface, allowing mock and local model implementations to be used independently.
+
+---
 
 ## 3. Implemented Components
 
-### Safety Gateway
+### 3.1 Safety Gateway
 
-- **Policy Engine:** Evaluates requested actions and returns `allow`, `deny`, or `require_approval`.
-- **Prompt Injection Detector:** Detects selected direct prompt-injection patterns using regular expressions.
-- **Trust Boundary Formatter:** Separates the user's request from external context and explicitly labels external content as untrusted.
-- **Tool Permission Manager:** Enforces application-level permissions for registered tools.
+| Component | Responsibility |
+|---|---|
+| Policy Engine | Evaluates requests and returns `allow`, `deny`, or `require_approval`. |
+| Prompt Injection Detector | Detects selected direct prompt-injection patterns using regular expressions. |
+| Trust Boundary Formatter | Separates user instructions from untrusted external context. |
+| Tool Permission Manager | Enforces application-level tool permissions. |
 
-### Tool Execution Framework
+The security layer is independent of LLM-generated authorization decisions.
 
-- Centralized tool registry and execution mechanism.
+### 3.2 Tool Execution Framework
+
+The centralized `ToolExecutor` controls tool registration and execution.
+
+Implemented capabilities:
+
+- Application-level tool permission checks.
 - Read-only and sensitive tool classifications.
-- Sensitive tools require approval before execution.
-- Calculator tool using Python AST parsing and an operator allowlist instead of `eval()`.
-- FastAPI endpoint for controlled tool execution.
-- Argument signature validation before tool invocation.
-- Duplicate and unauthorized tool registration prevention.
+- Prevention of unauthorized tool registration.
+- Duplicate registration prevention.
+- Callable validation.
+- Function signature validation.
+- Tool-specific Pydantic argument validation.
+- Prevention of execution when arguments are invalid.
 
-### Agent Orchestration
+The current calculator tool supports basic arithmetic using Python AST parsing and an explicit operator allowlist instead of `eval()`.
 
-- LangGraph-based stateful workflow.
-- Input validation node.
-- Prompt injection detection node.
-- Deterministic baseline planner.
-- Safety supervisor for tool authorization.
-- Controlled tool execution node.
-- Direct response node using the mock inference backend.
-- Blocked response path for rejected requests.
+**Example validation contract:**
 
-**Current limitation:** The planner is rule-based and does not use an LLM yet. LangGraph manages the workflow; it does not itself provide the language model.
+```python
+class CalculatorArgs(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+        str_strip_whitespace=True,
+    )
 
-### Inference API
+    expression: str = Field(
+        min_length=1,
+        max_length=100,
+    )
+```
 
-- FastAPI-based request handling.
-- Mock inference backend for development and testing.
-- Policy and injection checks before inference.
-- Optional external context with trust-boundary formatting.
+The same argument schema is shared by the planner and tool execution layer.
 
-## 4. API Endpoints
+### 3.3 Agent Orchestration
 
-The development server exposes two endpoints.
+The agent uses LangGraph to coordinate the execution workflow.
+
+Implemented nodes:
+
+- Input validation
+- Prompt injection detection
+- Deterministic planner
+- LLM planner
+- Safety supervisor
+- Controlled tool execution
+- Direct response
+- Blocked response
+
+The planner can select between:
+
+- `direct_response`
+- `tool_call`
+
+The LLM planner generates structured proposals that are validated using Pydantic before being passed to the safety supervisor.
+
+A planner failure results in a blocked request rather than unauthorized execution.
+
+### 3.4 Local LLM Integration
+
+Local inference is implemented through Ollama.
+
+Current configuration:
+
+| Component | Configuration |
+|---|---|
+| Runtime | Ollama |
+| Model | Qwen 3.5 0.8B |
+| Backend | `OllamaBackend` |
+| Communication | HTTP API |
+| Structured output | JSON Schema |
+| Validation | Pydantic |
+| Temperature | 0 |
+
+The local model is used for:
+
+- Structured task planning.
+- Tool selection.
+- Tool argument generation.
+- Direct response generation.
+
+The inference layer provides a common backend interface, with a mock implementation for testing and an Ollama implementation for real local inference.
+
+The current development environment has successfully run the Qwen model using GPU inference.
+
+### 3.5 Inference API
+
+The FastAPI application currently provides two endpoints:
 
 | Method | Endpoint | Description |
 |---|---|---|
 | POST | `/api/v1/execute` | Safety checks and inference |
 | POST | `/api/v1/tools/execute` | Permission-controlled tool execution |
 
-Interactive API documentation:
+The API and LangGraph agent are currently separate execution entry points. The agent's local LLM integration is not yet exposed through the FastAPI endpoints.
 
-`http://127.0.0.1:8000/docs`
+---
 
-### Example: AI Execution
-
-Request:
-
-```json
-{
-  "action": "answer",
-  "text": "Explain edge AI.",
-  "context": "Edge AI processes data close to its source."
-}
-```
-
-### Example: Calculator Tool
-
-Request:
-
-```json
-{
-  "tool_name": "calculator",
-  "arguments": {
-    "expression": "(10 + 5) * 2"
-  }
-}
-```
-
-Expected response:
-
-```json
-{
-  "decision": "allow",
-  "message": "Tool executed successfully.",
-  "result": 30
-}
-```
-
-## 5. Technology Stack
+## 4. Technology Stack
 
 | Area | Technology |
 |---|---|
@@ -162,45 +227,48 @@ Expected response:
 | API framework | FastAPI |
 | Data validation | Pydantic |
 | Agent orchestration | LangGraph |
+| Local inference runtime | Ollama |
+| Local LLM | Qwen 3.5 0.8B |
+| HTTP communication | HTTPX |
 | Testing | Pytest |
 | API testing | HTTPX / FastAPI TestClient |
-| Tool execution | Python |
-| Containerization | Docker — planned |
-| Local inference | Ollama / other local inference runtimes — planned |
-| Edge inference | ONNX Runtime — planned |
-| Model optimization | FP16 / INT8 — planned |
+| Tool execution | Python AST |
+| Version control | Git / GitHub |
+| Future edge inference | ONNX Runtime |
+| Future model optimization | FP16 / INT8 |
 
-## 6. Local Development
+---
+
+## 5. Local Development Setup
 
 ### Requirements
 
 - Python 3.12+
 - Git
 - PowerShell
+- Ollama (for local LLM inference)
 
-### Setup
-
-Clone the repository:
+### Clone the Repository
 
 ```powershell
 git clone https://github.com/hamghalam/sentineledge-ai.git
 cd sentineledge-ai
 ```
 
-Create and activate a virtual environment:
+### Create a Virtual Environment
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 ```
 
-Install dependencies:
+### Install Dependencies
 
 ```powershell
 python -m pip install -r requirements-dev.txt
 ```
 
-Set the source directory:
+### Configure Python Path
 
 ```powershell
 $env:PYTHONPATH = "src"
@@ -212,45 +280,94 @@ $env:PYTHONPATH = "src"
 python -m uvicorn sentineledge.api.main:app --reload
 ```
 
-Open:
+Interactive API documentation:
 
-`http://127.0.0.1:8000/docs`
+http://127.0.0.1:8000/docs
 
-### Run the LangGraph Agent
+### Configure Local Inference
 
-The current agent supports basic arithmetic requests through the calculator tool and direct responses through the mock inference backend.
+Install Ollama from:
+
+https://ollama.com/
+
+Download the model:
 
 ```powershell
-$env:PYTHONPATH = "src"
+ollama pull qwen3.5:0.8b
+```
 
+Ensure the Ollama service is running.
+
+### Run the LangGraph Agent with the Mock Backend
+
+```powershell
 python -c "from sentineledge.agent.graph import build_agent_graph; agent = build_agent_graph(); print(agent.invoke({'user_input': 'What is 10 + 5?'}))"
 ```
 
-### Run Tests
+### Run the LangGraph Agent with Ollama
 
 ```powershell
-$env:PYTHONPATH = "src"
+@'
+from sentineledge.inference.ollama_backend import OllamaBackend
+from sentineledge.agent.planner import LLMPlanner
+from sentineledge.agent.graph import build_agent_graph
+
+backend = OllamaBackend(model="qwen3.5:0.8b")
+planner = LLMPlanner(backend)
+
+agent = build_agent_graph(
+    inference_backend=backend,
+    planner_backend=planner,
+)
+
+result = agent.invoke({
+    "user_input": "What is 125 multiplied by 8?"
+})
+
+print(result)
+'@ | python
+```
+
+The agent should use the local LLM to generate a structured calculator proposal, validate it, authorize the tool, and execute the calculation.
+
+### Run Tests
+
+Run the complete test suite:
+
+```powershell
 python -m pytest -v
 ```
 
-## 7. Security Considerations and Limitations
+Run individual security tests:
 
-This project is an experimental engineering prototype, not a production-ready security gateway.
+```powershell
+python -m pytest tests/test_llm_planner_security.py -v
+python -m pytest tests/test_tool_permissions.py -v
+```
 
-Current limitations include:
+---
+
+## 6. Security Architecture and Limitations
+
+SentinelEdge AI is an experimental engineering prototype, not a production-ready security gateway.
+
+Important security considerations:
 
 - The prompt-injection detector uses a limited set of regular-expression patterns and cannot detect every attack.
-- Trust-boundary formatting is a defense-in-depth measure, not a guarantee that an LLM will ignore malicious external instructions.
-- The current planner is deterministic and rule-based; LLM-based planning has not yet been implemented.
-- The inference backend is currently a mock implementation.
-- Sensitive tools currently return `require_approval`; a trusted approval workflow has not yet been implemented.
+- Trust-boundary formatting is defense-in-depth, not a guarantee that an LLM will ignore malicious external instructions.
+- Structured output and Pydantic validation constrain planner proposals but do not establish that the proposed action is safe.
+- Authorization is enforced separately by application code.
+- Sensitive tools currently return `require_approval`; a trusted human-approval workflow has not yet been implemented.
 - The calculator supports a restricted set of arithmetic operations but requires further hardening against resource-exhaustion inputs.
 - Authentication, user-level authorization, rate limiting, and production-grade audit logging are not yet implemented.
-- The LangGraph workflow is currently a separate agent entry point and has not yet been integrated into the FastAPI execution endpoint.
+- The LangGraph agent is not yet integrated into the FastAPI execution endpoint.
+- Cloud inference and dynamic edge/cloud routing have not yet been implemented.
 
 Security decisions should be enforced by trusted application code rather than relying exclusively on model instructions or model-generated classifications.
 
-## 8. Roadmap
+---
+
+## 7. Development Roadmap
 
 ### Phase 1 — Safety and Tool Foundation
 
@@ -261,22 +378,30 @@ Security decisions should be enforced by trusted application code rather than re
 - [x] Tool permission manager
 - [x] Controlled tool executor
 - [x] Safe arithmetic calculator
+- [x] Function signature validation
+- [x] Tool-specific Pydantic argument validation
 - [x] API and unit tests
 
-### Phase 2 — Agentic AI
+### Phase 2 — Agentic AI and Local LLM
 
 - [x] LangGraph-based agent orchestration
-- [x] Baseline planner
+- [x] Deterministic baseline planner
 - [x] Safety supervisor
-- [x] Tool selection and execution workflow
-- [ ] LLM-based structured planner
+- [x] Controlled tool selection and execution
+- [x] Structured LLM planner
+- [x] Pydantic planner validation
+- [x] Ollama inference backend
+- [x] Local Qwen integration
+- [x] Planner failure handling
+- [x] Security tests for planner and tool execution
 - [ ] FastAPI integration for the agent workflow
 - [ ] Trusted human-approval mechanism
 - [ ] Output validation and grounding
 
 ### Phase 3 — Hybrid Cloud and Edge Inference
 
-- [ ] Local LLM integration
+- [x] Local LLM inference
+- [x] Modular inference backend interface
 - [ ] Cloud inference backend
 - [ ] Dynamic edge/cloud routing
 - [ ] Latency-, privacy-, and resource-aware routing
@@ -287,11 +412,14 @@ Security decisions should be enforced by trusted application code rather than re
 - [ ] FP16 and INT8 inference optimization
 - [ ] CPU/GPU/NPU benchmarking
 - [ ] Prompt-injection evaluation
-- [ ] Unauthorized tool execution tests
+- [ ] Unauthorized tool execution evaluation
 - [ ] Privacy leakage and unsafe-output evaluation
 - [ ] Latency, throughput, and memory profiling
+- [ ] Performance comparison between local and cloud inference
 
-## 9. Security and Research References
+---
+
+## 8. Security and Research References
 
 - [OWASP Top 10 for LLM Applications](https://genai.owasp.org/llm-top-10/)
 - [NIST AI Risk Management Framework](https://www.nist.gov/itl/ai-risk-management-framework)
@@ -300,5 +428,6 @@ Security decisions should be enforced by trusted application code rather than re
 
 ---
 
-**Author:** Mohammad Hamghalam  
+**Author:** Mohammad Hamghalam
+
 **Repository:** https://github.com/hamghalam/sentineledge-ai
